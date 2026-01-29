@@ -1,4 +1,4 @@
 discord.py
 supabase
-google-generativeai
+groq
 python-dotenv
