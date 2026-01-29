@@ -13,6 +13,12 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 MEMORY_LIMIT = 20
 
+# --- VALIDATE CONFIG ---
+REQUIRED_VARS = ["SUPABASE_URL", "SUPABASE_KEY", "GROQ_API_KEY", "DISCORD_TOKEN"]
+missing = [v for v in REQUIRED_VARS if not os.getenv(v)]
+if missing:
+    raise ValueError(f"CRITICAL: Missing environment variables: {', '.join(missing)}. Please add them to your hosting provider's Variables tab!")
+
 # --- INIT ---
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 groq_client = Groq(api_key=GROQ_API_KEY)
