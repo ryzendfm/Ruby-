@@ -1,0 +1,4 @@
+discord.py
+supabase
+google-generativeai
+python-dotenv
