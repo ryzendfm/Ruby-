@@ -85,6 +85,10 @@ class RubyMemory:
         res = supabase.table('convos').select('*').eq('user_uuid', user_uuid).order('created_at', desc=True).limit(limit).execute()
         return res.data[::-1] if res.data else []
 
+    def get_message_count(self, user_uuid):
+        res = supabase.table('convos').select('*', count='exact').eq('user_uuid', user_uuid).execute()
+        return res.count
+
 memory = RubyMemory()
 
 # --- THE LOGIC ENGINE ---
@@ -102,6 +106,59 @@ def decide_stance(speaker, target):
     if sp_aff > (tg_aff + 20): return "ATTACK_TARGET", "Sassy"
 
     return "NEUTRAL_CHAOS", "Playful"
+
+# --- EMOTIONAL ANALYSIS ENGINE ---
+async def analyze_emotions(history_text, speaker_data):
+    print(f"DEBUG: Analyzing emotions for {speaker_data['nickname']}...")
+    try:
+        current_rel = speaker_data['rel']
+        prompt = f"""
+        Analyze the recent conversation history between User and Ruby.
+        Determine how the User's tone should impact Ruby's emotional stats towards them.
+        
+        Current Stats:
+        - Affinity: {current_rel['affinity_score']} (0-100)
+        - Trust: {current_rel['trust_score']} (0-100)
+        
+        Rules:
+        - Return ONLY a JSON object with delta values (no markdown, no explanations).
+        - Keys: "affinity_change", "trust_change".
+        - Changes should be small integers (e.g., -2, +1, +5, 0).
+        - Be strict: Rude/creepy behavior = negative change. Nice/funny = positive. Boring = 0.
+        
+        History:
+        {history_text}
+        """
+        
+        chat_completion = groq_client.chat.completions.create(
+            messages=[{"role": "system", "content": prompt}],
+            model="llama-3.1-8b-instant",
+            response_format={"type": "json_object"}
+        )
+        
+        result = chat_completion.choices[0].message.content
+        import json
+        deltas = json.loads(result)
+        
+        new_affinity = current_rel['affinity_score'] + deltas.get('affinity_change', 0)
+        new_trust = current_rel['trust_score'] + deltas.get('trust_change', 0)
+        
+        # Clamp values
+        new_affinity = max(-100, min(100, new_affinity))
+        new_trust = max(0, min(100, new_trust))
+        
+        # Update DB
+        supabase.table('relationships').update({
+            "affinity_score": new_affinity,
+            "trust_score": new_trust
+        }).eq('user_uuid', speaker_data['uuid']).execute()
+        
+        print(f"DEBUG: Updated Stats for {speaker_data['nickname']}: Aff {current_rel['affinity_score']}->{new_affinity}, Trust {current_rel['trust_score']}->{new_trust}")
+        return True
+
+    except Exception as e:
+        print(f"ERROR in analyze_emotions: {e}")
+        return False
 
 # --- CORE RESPONSE HANDLER ---
 async def handle_bot_logic(message, is_ambient=False):
@@ -123,6 +180,21 @@ async def handle_bot_logic(message, is_ambient=False):
         history_messages.append(f"{role}: {content}")
     
     history_text = "\n".join(history_messages[::-1])
+
+    # 1.8 AUTOMATED EMOTIONAL UPDATE (Every 3 messages)
+    # Check count
+    msg_count = memory.get_message_count(speaker['uuid'])
+    # Analysis triggers on 3rd, 6th, 9th... message
+    # We check if count > 0 and count % 3 == 0. 
+    # Note: The count is BEFORE the current message is logged (since we log at the end).
+    # So if they have 2 messages, this is the 3rd. (Count 2 means 0, 1 existed. This is index 2).
+    # Actually simpler: Log first? No, we need to respond.
+    # Let's check (msg_count + 1) % 3 == 0
+    
+    if (msg_count + 1) % 3 == 0:
+        await analyze_emotions(history_text + f"\nUser: {message.clean_content}", speaker)
+        # REFRESH DATA to get new stats
+        speaker = memory.get_user_data(message.author.id, message.author.name, message.author.display_name)
 
     # 2. RUN LOGIC
     action, mode = decide_stance(speaker, target)
