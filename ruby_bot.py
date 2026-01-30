@@ -75,33 +75,6 @@ class RubyMemory:
         res = supabase.table('convos').select('id').eq('user_uuid', user_uuid).limit(1).execute()
         return len(res.data) > 0
 
-    def update_stats(self, user_uuid, affinity_delta=0, trust_delta=0):
-        """Updates affinity/trust and recalculates role if needed."""
-        # 1. Get current stats
-        res = supabase.table('relationships').select('*').eq('user_uuid', user_uuid).execute()
-        if not res.data: return
-        
-        rel = res.data[0]
-        new_aff = max(-100, min(100, rel['affinity_score'] + affinity_delta))
-        new_trust = max(0, min(100, rel['trust_score'] + trust_delta))
-        
-        # 2. Determine new role based on affinity
-        new_role = rel['role']
-        if new_aff >= 80: new_role = 'favorite'
-        elif new_aff >= 40: new_role = 'friend'
-        elif new_aff <= -50: new_role = 'enemy'
-        elif new_aff <= -20: new_role = 'annoying'
-        else: new_role = 'neutral'
-        
-        # 3. Update DB
-        supabase.table('relationships').update({
-            "affinity_score": new_aff,
-            "trust_score": new_trust,
-            "role": new_role
-        }).eq('user_uuid', user_uuid).execute()
-        
-        return new_aff, new_role
-
     def log_chat(self, user_uuid, role, content):
         supabase.table('convos').insert({"user_uuid": user_uuid, "role": role, "content": content}).execute()
     
@@ -198,14 +171,6 @@ async def handle_bot_logic(message, is_ambient=False):
         """
 
     system_instruction += f"""
-    --- DYNAMIC RELATIONSHIPS ---
-    You must track how you feel about the speaker. At the end of every message, add a hidden tag to update your stats.
-    - If they are nice/complimentary: [AFFINITY: +2]
-    - If they are mean/insulting: [AFFINITY: -5]
-    - If they share something personal/trustworthy: [TRUST: +3]
-    - If they lie or are suspicious: [TRUST: -5]
-    Example: "Oh! You're so sweet! [AFFINITY: +2]"
-
     --- MEMORY UPDATES ---
     If the user explicitly tells you their name (e.g., "Call me [Name]" or "I am [Name]"), you MUST update your memory.
     To do this, add this EXACT tag to the end of your response: [SET_NAME: NewName]
@@ -250,22 +215,6 @@ async def handle_bot_logic(message, is_ambient=False):
         chat_completion = groq_client.chat.completions.create(messages=messages, model=model_to_use)
         reply = chat_completion.choices[0].message.content.strip()
         
-        # 5. PARSE DYNAMIC STATS
-        aff_match = re.search(r'\[AFFINITY:\s*([+-]?\d+)\]', reply)
-        trust_match = re.search(r'\[TRUST:\s*([+-]?\d+)\]', reply)
-        
-        aff_delta = int(aff_match.group(1)) if aff_match else 0
-        trust_delta = int(trust_match.group(1)) if trust_match else 0
-        
-        if aff_delta != 0 or trust_delta != 0:
-            new_aff, new_role = memory.update_stats(speaker['uuid'], aff_delta, trust_delta)
-            print(f"DEBUG: Updated stats for {speaker['nickname']}: Aff={new_aff}, Role={new_role}")
-            
-            # Remove tags from reply
-            if aff_match: reply = reply.replace(aff_match.group(0), "").strip()
-            if trust_match: reply = reply.replace(trust_match.group(0), "").strip()
-
-        # 6. PARSE COMMANDS
         if "[SET_NAME:" in reply:
             match = re.search(r'\[SET_NAME:\s*(.*?)\]', reply)
             if match:
@@ -318,6 +267,70 @@ Jealousy: `{rel['jealousy_meter']}`
 Insults: `{rel['insults_count']}` | Compliments: `{rel['compliments_count']}`
 """
         await message.channel.send(stats_msg)
+        return
+
+    # 0.1 DEBUG COMMANDS (Admin/Owner Only - Simplified check for now)
+    # Usage: !set_affinity @User 50
+    if message.content.startswith("!set_affinity"):
+        if not message.author.guild_permissions.administrator: # Basic admin check
+             return
+        try:
+            _, mention, score = message.content.split()
+            target_id = message.mentions[0].id
+            new_score = int(score)
+            
+            # Update DB
+            # Get User UUID first
+            res = supabase.table('users').select('id').eq('discord_id', str(target_id)).execute()
+            if res.data:
+                uuid = res.data[0]['id']
+                supabase.table('relationships').update({"affinity_score": new_score}).eq('user_uuid', uuid).execute()
+                await message.add_reaction("✅")
+            else:
+                await message.channel.send("User not found in memory.")
+        except Exception as e:
+            await message.channel.send(f"Error: {e}")
+        return
+
+    # Usage: !set_trust @User 50
+    if message.content.startswith("!set_trust"):
+        if not message.author.guild_permissions.administrator:
+             return
+        try:
+            _, mention, score = message.content.split()
+            target_id = message.mentions[0].id
+            new_score = int(score)
+            
+            res = supabase.table('users').select('id').eq('discord_id', str(target_id)).execute()
+            if res.data:
+                uuid = res.data[0]['id']
+                supabase.table('relationships').update({"trust_score": new_score}).eq('user_uuid', uuid).execute()
+                await message.add_reaction("✅")
+        except Exception as e:
+            await message.channel.send(f"Error: {e}")
+        return
+
+    # Usage: !set_role @User enemy
+    if message.content.startswith("!set_role"):
+        if not message.author.guild_permissions.administrator:
+             return
+        try:
+            parts = message.content.split()
+            role = parts[2].lower() # !set_role @User role
+            target_id = message.mentions[0].id
+            
+            valid_roles = ['neutral', 'friend', 'enemy', 'annoying', 'baby', 'favorite']
+            if role not in valid_roles:
+                await message.channel.send(f"Invalid role. Choices: {', '.join(valid_roles)}")
+                return
+
+            res = supabase.table('users').select('id').eq('discord_id', str(target_id)).execute()
+            if res.data:
+                uuid = res.data[0]['id']
+                supabase.table('relationships').update({"role": role}).eq('user_uuid', uuid).execute()
+                await message.add_reaction("✅")
+        except Exception as e:
+            await message.channel.send(f"Error: {e}")
         return
 
     # 1. MENTION TRIGGER (100% response)
