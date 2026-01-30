@@ -272,15 +272,22 @@ Insults: `{rel['insults_count']}` | Compliments: `{rel['compliments_count']}`
     # 0.1 DEBUG COMMANDS (Admin/Owner Only - Simplified check for now)
     # Usage: !set_affinity @User 50
     if message.content.startswith("!set_affinity"):
-        if not message.author.guild_permissions.administrator: # Basic admin check
+        if not message.author.guild_permissions.administrator: 
              return
         try:
-            _, mention, score = message.content.split()
+            parts = message.content.split()
+            if len(parts) < 3:
+                await message.channel.send("Usage: !set_affinity @User <score>")
+                return
+            
+            if not message.mentions:
+                await message.channel.send("Please mention a user.")
+                return
+
             target_id = message.mentions[0].id
-            new_score = int(score)
+            new_score = int(parts[-1]) # Grab last part as score
             
             # Update DB
-            # Get User UUID first
             res = supabase.table('users').select('id').eq('discord_id', str(target_id)).execute()
             if res.data:
                 uuid = res.data[0]['id']
@@ -297,9 +304,17 @@ Insults: `{rel['insults_count']}` | Compliments: `{rel['compliments_count']}`
         if not message.author.guild_permissions.administrator:
              return
         try:
-            _, mention, score = message.content.split()
+            parts = message.content.split()
+            if len(parts) < 3:
+                await message.channel.send("Usage: !set_trust @User <score>")
+                return
+            
+            if not message.mentions:
+                await message.channel.send("Please mention a user.")
+                return
+
             target_id = message.mentions[0].id
-            new_score = int(score)
+            new_score = int(parts[-1])
             
             res = supabase.table('users').select('id').eq('discord_id', str(target_id)).execute()
             if res.data:
@@ -316,7 +331,15 @@ Insults: `{rel['insults_count']}` | Compliments: `{rel['compliments_count']}`
              return
         try:
             parts = message.content.split()
-            role = parts[2].lower() # !set_role @User role
+            if len(parts) < 3:
+                await message.channel.send("Usage: !set_role @User <role>")
+                return
+            
+            if not message.mentions:
+                await message.channel.send("Please mention a user.")
+                return
+            
+            role = parts[-1].lower()
             target_id = message.mentions[0].id
             
             valid_roles = ['neutral', 'friend', 'enemy', 'annoying', 'baby', 'favorite']
