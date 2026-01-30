@@ -98,9 +98,15 @@ class RubyMemory:
                 r = supabase.table('users').select('username').eq('id', u_uuid).single().execute()
                 return r.data['username'] if r.data else "Unknown"
 
-            # 1. Favorite
-            fav = supabase.table('relationships').select('user_uuid').in_('role', ['favorite', 'baby']).limit(1).execute()
-            stats['favorite'] = get_name(fav.data[0]['user_uuid']) if fav.data else "No one yet..."
+            # 1. Favorite (Baby > Favorite)
+            # Check for 'baby' first ( Supreme Role )
+            baby = supabase.table('relationships').select('user_uuid').eq('role', 'baby').limit(1).execute()
+            if baby.data:
+                 stats['favorite'] = get_name(baby.data[0]['user_uuid'])
+            else:
+                 # Fallback to normal favorite
+                 fav = supabase.table('relationships').select('user_uuid').eq('role', 'favorite').limit(1).execute()
+                 stats['favorite'] = get_name(fav.data[0]['user_uuid']) if fav.data else "No one yet..."
 
             # 2. Affinity (High/Low)
             high_aff = supabase.table('relationships').select('user_uuid').order('affinity_score', desc=True).limit(1).execute()
