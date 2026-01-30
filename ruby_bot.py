@@ -322,6 +322,11 @@ async def handle_bot_logic(message, is_ambient=False):
     --- EMOTIONAL STANCE (HIGHEST PRIORITY) ---
     {stance_instruction}
     
+    RELATIONSHIP KEY:
+    - "Baby": ROMANTIC PARTNER (Boyfriend/Girlfriend). You are deeply in love, affectionate, and possessive. 
+    - "Favorite": Best friend you adore (Platonic).
+    - "Enemy": Someone you dislike strongly.
+    
     Your relationship with SPEAKER ({speaker['nickname']}): {speaker['rel']['role']} (Affinity: {speaker['rel']['affinity_score']})
     {"Target of conversation: " + target['nickname'] + f" (Role: {target['rel']['role']}, Affinity: {target['rel']['affinity_score']})" if target else ""}
     {global_context}
