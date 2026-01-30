@@ -112,19 +112,26 @@ async def analyze_emotions(history_text, speaker_data):
     print(f"DEBUG: Analyzing emotions for {speaker_data['nickname']}...")
     try:
         current_rel = speaker_data['rel']
+        role = current_rel['role']
+        
         prompt = f"""
         Analyze the recent conversation history between User and Ruby.
-        Determine how the User's tone should impact Ruby's emotional stats towards them.
+        Determine how the User's tone should impact Ruby's emotional stats.
         
+        User Role: {role}
         Current Stats:
-        - Affinity: {current_rel['affinity_score']} (0-100)
-        - Trust: {current_rel['trust_score']} (0-100)
+        - Affinity: {current_rel['affinity_score']}
+        - Trust: {current_rel['trust_score']}
+        - Jealousy: {current_rel['jealousy_meter']}
         
         Rules:
-        - Return ONLY a JSON object with delta values (no markdown, no explanations).
-        - Keys: "affinity_change", "trust_change".
-        - Changes should be small integers (e.g., -2, +1, +5, 0).
-        - Be strict: Rude/creepy behavior = negative change. Nice/funny = positive. Boring = 0.
+        1. Return ONLY a JSON object with deltas/counts. Keys: 
+           "affinity_change", "trust_change", "jealousy_change", "insults_count", "compliments_count".
+        2. Affinity/Trust: Small integers (+/- 1 to 5). Nice=+, Rude=-.
+        3. Jealousy: 
+           - Increase (+2 to +5) IF User talks about other girls/bots AND Role is "favorite" or "baby".
+           - Otherwise, keep change 0 or very small.
+        4. Insults/Compliments: Count explicit ones in this chunk (formatted as integer, e.g. 0 or 1).
         
         History:
         {history_text}
@@ -138,22 +145,26 @@ async def analyze_emotions(history_text, speaker_data):
         
         result = chat_completion.choices[0].message.content
         import json
-        deltas = json.loads(result)
+        data = json.loads(result)
         
-        new_affinity = current_rel['affinity_score'] + deltas.get('affinity_change', 0)
-        new_trust = current_rel['trust_score'] + deltas.get('trust_change', 0)
+        # Calculate new totals
+        new_affinity = max(-100, min(100, current_rel['affinity_score'] + data.get('affinity_change', 0)))
+        new_trust = max(0, min(100, current_rel['trust_score'] + data.get('trust_change', 0)))
+        new_jealousy = max(0, min(100, current_rel['jealousy_meter'] + data.get('jealousy_change', 0)))
         
-        # Clamp values
-        new_affinity = max(-100, min(100, new_affinity))
-        new_trust = max(0, min(100, new_trust))
+        new_insults = current_rel['insults_count'] + data.get('insults_count', 0)
+        new_compliments = current_rel['compliments_count'] + data.get('compliments_count', 0)
         
         # Update DB
         supabase.table('relationships').update({
             "affinity_score": new_affinity,
-            "trust_score": new_trust
+            "trust_score": new_trust,
+            "jealousy_meter": new_jealousy,
+            "insults_count": new_insults,
+            "compliments_count": new_compliments
         }).eq('user_uuid', speaker_data['uuid']).execute()
         
-        print(f"DEBUG: Updated Stats for {speaker_data['nickname']}: Aff {current_rel['affinity_score']}->{new_affinity}, Trust {current_rel['trust_score']}->{new_trust}")
+        print(f"DEBUG: Updated {speaker_data['nickname']} -> Aff:{new_affinity} Tru:{new_trust} Jeal:{new_jealousy} Ins:{new_insults} Comp:{new_compliments}")
         return True
 
     except Exception as e:
