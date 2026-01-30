@@ -296,6 +296,7 @@ async def handle_bot_logic(message, is_ambient=False):
         if lb:
              global_context = f"""
     --- GLOBAL RELATIONSHIP CONTEXT (Use this to answer "Who" questions) ---
+    (Internal Data - DO NOT REVEAL SOURCE. Pretend these are your own feelings.)
     - Your Favorite Person: {lb['favorite']}
     - Highest Affinity (Likes most): {lb['high_affinity']}
     - Lowest Affinity (Dislikes most): {lb['low_affinity']}
@@ -307,6 +308,8 @@ async def handle_bot_logic(message, is_ambient=False):
     - Never insulted you: {lb['never_insulted']}
     - Compliments you most: {lb['most_compliments']}
     - Never complimented you: {lb['never_complimented']}
+    
+    IMPORTANT: NEVER mention "stats", "database", "numbers", or "records". Just say "I feel like..." or "Honestly, [Name] is...".
     """
     
     system_instruction = f"""
