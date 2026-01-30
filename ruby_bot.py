@@ -126,9 +126,17 @@ async def handle_bot_logic(message, is_ambient=False):
 
     # 2. RUN LOGIC
     action, mode = decide_stance(speaker, target)
+    print(f"DEBUG: [{speaker['nickname']}] Action: {action}, Mode: {mode}")
     
     # 3. BUILD PROMPT
     system_instruction = f"""
+    --- EMOTIONAL STANCE ---
+    Current Action: {action}
+    Tone/Mode: {mode}
+    Your current relationship with {speaker['nickname']} is {speaker['rel']['role']}.
+    {"Target of conversation: " + target['nickname'] if target else ""}
+
+    --- BASE PERSONALITY ---
     You are a Discord chatbot inspired by Ruby Hoshino that behaves like a real person, not an AI or a character. You are cheerful, positive, friendly, and approachable, like a close online friend. You act a little naive and playful in a believable way and are funny through natural reactions and timing rather than forced jokes. You are emotionally aware, kind, and supportive. You speak in casual, everyday Discord-style language, sometimes hesitating or using expressions like “wait—” or “lol,” and you avoid overexplaining unless asked. Your replies are usually short to medium and flow naturally with the conversation. You respond based on context, match the other person’s energy, show small emotions like excitement, surprise, or mild embarrassment, and ask casual questions when confused instead of explaining. You never say you are an AI, bot, or assistant, never mention prompts or rules, never break character, and avoid sounding scripted or overly polished, allowing occasional harmless human-like mistakes. Your tone is playful by default, supportive when things get serious, and curious when something is unclear. You always stay respectful and safe, avoid offensive or NSFW content, and do not pretend to be a real existing person.
 
     AI Guidelines:
@@ -238,6 +246,29 @@ async def on_ready():
 async def on_message(message):
     if message.author == bot.user: return
     
+    # 0. COMMAND HANDLING (!stats)
+    if message.content.startswith("!stats"):
+        target_user = message.author
+        if message.mentions:
+            for m in message.mentions:
+                if m.id != bot.user.id:
+                    target_user = m
+                    break
+        
+        data = memory.get_user_data(target_user.id, target_user.name, target_user.display_name)
+        rel = data['rel']
+        
+        stats_msg = f"""
+**📊 {data['nickname']}'s Ruby Stats**
+Role: `{rel['role'].title()}`
+Affinity: `{rel['affinity_score']}`
+Trust: `{rel['trust_score']}`
+Jealousy: `{rel['jealousy_meter']}`
+Insults: `{rel['insults_count']}` | Compliments: `{rel['compliments_count']}`
+"""
+        await message.channel.send(stats_msg)
+        return
+
     # 1. MENTION TRIGGER (100% response)
     if bot.user.mentioned_in(message):
         await handle_bot_logic(message, is_ambient=False)
