@@ -89,6 +89,59 @@ class RubyMemory:
         res = supabase.table('convos').select('*', count='exact').eq('user_uuid', user_uuid).execute()
         return res.count
 
+    def get_leaderboard(self):
+        stats = {}
+        try:
+            # Helper to get name from user_uuid
+            def get_name(u_uuid):
+                if not u_uuid: return "None"
+                r = supabase.table('users').select('username').eq('id', u_uuid).single().execute()
+                return r.data['username'] if r.data else "Unknown"
+
+            # 1. Favorite
+            fav = supabase.table('relationships').select('user_uuid').in_('role', ['favorite', 'baby']).limit(1).execute()
+            stats['favorite'] = get_name(fav.data[0]['user_uuid']) if fav.data else "No one yet..."
+
+            # 2. Affinity (High/Low)
+            high_aff = supabase.table('relationships').select('user_uuid').order('affinity_score', desc=True).limit(1).execute()
+            stats['high_affinity'] = get_name(high_aff.data[0]['user_uuid']) if high_aff.data else "No one"
+            
+            low_aff = supabase.table('relationships').select('user_uuid').order('affinity_score', desc=False).limit(1).execute()
+            stats['low_affinity'] = get_name(low_aff.data[0]['user_uuid']) if low_aff.data else "No one"
+
+            # 3. Trust (High/Low)
+            high_trust = supabase.table('relationships').select('user_uuid').order('trust_score', desc=True).limit(1).execute()
+            stats['high_trust'] = get_name(high_trust.data[0]['user_uuid']) if high_trust.data else "No one"
+            
+            low_trust = supabase.table('relationships').select('user_uuid').order('trust_score', desc=False).limit(1).execute()
+            stats['low_trust'] = get_name(low_trust.data[0]['user_uuid']) if low_trust.data else "No one"
+
+            # 4. Jealousy (High/Never)
+            high_jeal = supabase.table('relationships').select('user_uuid').order('jealousy_meter', desc=True).limit(1).execute()
+            stats['high_jealousy'] = get_name(high_jeal.data[0]['user_uuid']) if high_jeal.data else "No one"
+
+            zero_jeal = supabase.table('relationships').select('user_uuid').eq('jealousy_meter', 0).execute()
+            stats['never_jealous'] = get_name(random.choice(zero_jeal.data)['user_uuid']) if zero_jeal.data else "Everyone makes me jealous!"
+
+            # 5. Insults (Most/Never)
+            most_ins = supabase.table('relationships').select('user_uuid').order('insults_count', desc=True).limit(1).execute()
+            stats['most_insults'] = get_name(most_ins.data[0]['user_uuid']) if most_ins.data else "No one"
+
+            zero_ins = supabase.table('relationships').select('user_uuid').eq('insults_count', 0).execute()
+            stats['never_insulted'] = get_name(random.choice(zero_ins.data)['user_uuid']) if zero_ins.data else "Everyone is mean!"
+
+            # 6. Compliments (Most/Never)
+            most_comp = supabase.table('relationships').select('user_uuid').order('compliments_count', desc=True).limit(1).execute()
+            stats['most_compliments'] = get_name(most_comp.data[0]['user_uuid']) if most_comp.data else "No one"
+
+            zero_comp = supabase.table('relationships').select('user_uuid').eq('compliments_count', 0).execute()
+            stats['never_complimented'] = get_name(random.choice(zero_comp.data)['user_uuid']) if zero_comp.data else "Everyone is nice!"
+            
+            return stats
+        except Exception as e:
+            print(f"Leaderboard Error: {e}")
+            return None
+
 memory = RubyMemory()
 
 # --- THE LOGIC ENGINE ---
@@ -232,13 +285,37 @@ async def handle_bot_logic(message, is_ambient=False):
         ACTION: {action}
         Maintain your normal playful, cheerful self, but adapt to this mode.
         """
-
+    
+    # 3.1 GATHER GLOBAL CONTEXT (Leaderboard) for "Who is your favorite?" questions
+    global_context = ""
+    msg_lower = message.content.lower()
+    keywords = ["who", "favorite", "hate", "love", "trust", "jealous", "insult", "compliment", "most", "least", "never"]
+    # Check if "who" + at least one other keyword
+    if "who" in msg_lower and any(k in msg_lower for k in keywords if k != "who"):
+        lb = memory.get_leaderboard()
+        if lb:
+             global_context = f"""
+    --- GLOBAL RELATIONSHIP CONTEXT (Use this to answer "Who" questions) ---
+    - Your Favorite Person: {lb['favorite']}
+    - Highest Affinity (Likes most): {lb['high_affinity']}
+    - Lowest Affinity (Dislikes most): {lb['low_affinity']}
+    - Most Trusted: {lb['high_trust']}
+    - Least Trusted: {lb['low_trust']}
+    - Makes you most Jealous: {lb['high_jealousy']}
+    - Never makes you Jealous: {lb['never_jealous']}
+    - Insults you most: {lb['most_insults']}
+    - Never insulted you: {lb['never_insulted']}
+    - Compliments you most: {lb['most_compliments']}
+    - Never complimented you: {lb['never_complimented']}
+    """
+    
     system_instruction = f"""
     --- EMOTIONAL STANCE (HIGHEST PRIORITY) ---
     {stance_instruction}
     
     Your relationship with SPEAKER ({speaker['nickname']}): {speaker['rel']['role']} (Affinity: {speaker['rel']['affinity_score']})
     {"Target of conversation: " + target['nickname'] + f" (Role: {target['rel']['role']}, Affinity: {target['rel']['affinity_score']})" if target else ""}
+    {global_context}
 
     --- BASE PERSONALITY (Apply only if not overridden above) ---
     You are a Discord chatbot inspired by Ruby Hoshino that behaves like a real person, not an AI. 
