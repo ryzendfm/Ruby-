@@ -1,7 +1,14 @@
+import os
+import discord
+from discord.ext import commands
+from supabase import create_client, Client
+from dotenv import load_dotenv
 import random
 import time
 import re
 import traceback
+import base64
+import requests
 
 # --- CONFIG ---
 load_dotenv()
