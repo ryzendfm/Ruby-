@@ -2,6 +2,8 @@ import os
 import discord
 from discord.ext import commands
 from supabase import create_client, Client
+import base64
+import requests
 from groq import Groq
 from dotenv import load_dotenv
 
@@ -184,12 +186,38 @@ async def on_message(message):
 
         # 4. GENERATE
         try:
+            # --- HYBRID ARCHITECTURE LOGIC ---
+            image_url = None
+            if message.attachments:
+                for attachment in message.attachments:
+                    if any(attachment.filename.lower().endswith(ext) for ext in ["png", "jpg", "jpeg", "gif", "webp"]):
+                        image_url = attachment.url
+                        break
+            
+            model_to_use = "meta-llama/llama-4-scout-17b-16e-instruct" if image_url else "llama-3.1-8b-instant"
+            
+            messages = [
+                {"role": "system", "content": system_instruction},
+            ]
+
+            if image_url:
+                # Prioritize URL, but provide a way to handle failure (simplified for this implementation)
+                user_content = [
+                    {"type": "text", "text": user_message_content},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": image_url,
+                        },
+                    },
+                ]
+                messages.append({"role": "user", "content": user_content})
+            else:
+                messages.append({"role": "user", "content": user_message_content})
+
             chat_completion = groq_client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": system_instruction},
-                    {"role": "user", "content": user_message_content}
-                ],
-                model="llama-3.1-8b-instant",
+                messages=messages,
+                model=model_to_use,
             )
             reply = chat_completion.choices[0].message.content.strip()
             
