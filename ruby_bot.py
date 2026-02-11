@@ -185,12 +185,13 @@ async def analyze_emotions(history_text, speaker_data):
         
         Rules:
         1. Return ONLY a JSON object with deltas/counts. Keys: 
-           "affinity_change", "trust_change", "jealousy_change", "insults_count", "compliments_count".
+           "affinity_change", "trust_change", "jealousy_change", "insults_count", "compliments_count", "vibe_summary".
         2. Affinity/Trust: Small integers (+/- 1 to 5). Nice=+, Rude=-.
         3. Jealousy: 
            - Increase (+2 to +5) IF User talks about other girls/bots AND Role is "favorite" or "baby".
            - Otherwise, keep change 0 or very small.
         4. Insults/Compliments: Count explicit ones in this chunk (formatted as integer, e.g. 0 or 1).
+        5. Vibe Summary: A very short (3-5 words) description of the User's current vibe based on this chunk (e.g., "Chill and funny", "Needy and annoying", "Sus and quiet").
         
         History:
         {history_text}
@@ -213,8 +214,9 @@ async def analyze_emotions(history_text, speaker_data):
         
         new_insults = current_rel['insults_count'] + data.get('insults_count', 0)
         new_compliments = current_rel['compliments_count'] + data.get('compliments_count', 0)
-        
-        # Update DB
+        new_vibe = data.get('vibe_summary', "Neutral")
+
+        # Update DB - Relationships
         supabase.table('relationships').update({
             "affinity_score": new_affinity,
             "trust_score": new_trust,
@@ -222,8 +224,13 @@ async def analyze_emotions(history_text, speaker_data):
             "insults_count": new_insults,
             "compliments_count": new_compliments
         }).eq('user_uuid', speaker_data['uuid']).execute()
+
+        # Update DB - Personalities (Vibe)
+        supabase.table('personalities').update({
+            "vibe_summary": new_vibe
+        }).eq('user_uuid', speaker_data['uuid']).execute()
         
-        print(f"DEBUG: Updated {speaker_data['nickname']} -> Aff:{new_affinity} Tru:{new_trust} Jeal:{new_jealousy} Ins:{new_insults} Comp:{new_compliments}")
+        print(f"DEBUG: Updated {speaker_data['nickname']} -> Aff:{new_affinity} Tru:{new_trust} Jeal:{new_jealousy} Ins:{new_insults} Comp:{new_compliments} Vibe:{new_vibe}")
         return True
 
     except Exception as e:
@@ -329,6 +336,7 @@ async def handle_bot_logic(message, is_ambient=False):
     - "Enemy": Someone you dislike strongly.
     
     Your relationship with SPEAKER ({speaker['nickname']}): {speaker['rel']['role']} (Affinity: {speaker['rel']['affinity_score']})
+    Speaker's Vibe: {speaker['pers']['vibe_summary']}
     {"Target of conversation: " + target['nickname'] + f" (Role: {target['rel']['role']}, Affinity: {target['rel']['affinity_score']})" if target else ""}
     {global_context}
 
