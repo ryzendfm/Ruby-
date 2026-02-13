@@ -409,39 +409,58 @@ async def handle_bot_logic(message, is_ambient=False):
     from dateutil import parser
     
     now = datetime.datetime.now(datetime.timezone.utc)
-    last_seen_iso = memory.get_last_seen(speaker['uuid'])
-    time_context = ""
     
-    if last_seen_iso:
+    def get_fuzzy_time(last_seen_iso):
+        if not last_seen_iso: return "never"
         last_seen = parser.isoparse(last_seen_iso)
         delta = now - last_seen
         
-        days = delta.days
-        seconds = delta.seconds
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
+        seconds = delta.total_seconds()
+        minutes = int(seconds // 60)
+        hours = int(minutes // 60)
+        days = int(hours // 24)
         
-        time_str = ""
-        if days > 0: time_str = f"{days} days"
-        elif hours > 0: time_str = f"{hours} hours"
-        else: time_str = f"{minutes} minutes"
-        
-        time_context = f"Time since last spoke: {time_str}"
-        
-        if days >= 2:
+        if seconds < 60: return "just now"
+        if minutes < 10: return "a few minutes ago"
+        if minutes < 60: return f"like {minutes} mins ago"
+        if hours < 2: return "an hour ago"
+        if hours < 24: return f"like {hours} hours ago"
+        if days == 1: return "yesterday"
+        if days < 7: return f"{days} days ago"
+        return "ages ago"
+
+    # Speaker Context
+    speaker_last = memory.get_last_seen(speaker['uuid'])
+    speaker_time = get_fuzzy_time(speaker_last)
+    
+    # Target Context
+    target_time = "unknown"
+    if target:
+        target_last = memory.get_last_seen(target['uuid'])
+        target_time = get_fuzzy_time(target_last)
+
+    time_context = f"Time since you last spoke to User: {speaker_time}"
+    if target: 
+        time_context += f"\nTime since {target['nickname']} last spoke: {target_time}"
+    
+    # Add reactive hints
+    if speaker_last:
+        delta = now - parser.isoparse(speaker_last)
+        if delta.days >= 2:
             time_context += "\n(User has been gone for a LONG time. React accordingly: 'It's been so long!', 'You still remember me?', etc.)"
-        elif days == 0 and hours < 1:
+        elif delta.total_seconds() < 600: # 10 mins
             time_context += "\n(User replied very quickly. You can tease them: 'What took you so long lol?', 'Miss me already?', etc.)"
-    else:
-        time_context = "This is your first meeting."
 
     user_message_content = f"""
     --- RECENT CONVERSATION (Most Recent Last) ---
     {history_text}
     
     --- TIME CONTEXT ---
-    Current Time: {now.strftime("%Y-%m-%d %H:%M")}
+    Current Time: {now.strftime("%I:%M %p")} (Approx)
     {time_context}
+    
+    INSTRUCTION: Keep time references CASUAL and FUZZY (e.g., "a while ago", "yesterday", "idk like 10 mins??").
+    EXCEPTION: If your Stance is SASSY/HOSTILE, you can be weirdly specific to prove a point (e.g. "Actually it was 2:43 PM.").
 
     Respond to: "{current_content}"
     """
