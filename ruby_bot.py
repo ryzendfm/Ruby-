@@ -90,6 +90,13 @@ class RubyMemory:
         res = supabase.table('convos').select('*', count='exact').eq('user_uuid', user_uuid).execute()
         return res.count
 
+    def get_last_seen(self, user_uuid):
+        """Returns the timestamp of the last message from this user (or None)"""
+        res = supabase.table('convos').select('created_at').eq('user_uuid', user_uuid).eq('role', 'user').order('created_at', desc=True).limit(1).execute()
+        if res.data:
+            return res.data[0]['created_at']
+        return None
+
     def get_leaderboard(self):
         stats = {}
         try:
@@ -396,9 +403,45 @@ async def handle_bot_logic(message, is_ambient=False):
     """
 
     current_content = message.clean_content
+    
+    # 3.2 TIME AWARNESS
+    import datetime
+    from dateutil import parser
+    
+    now = datetime.datetime.now(datetime.timezone.utc)
+    last_seen_iso = memory.get_last_seen(speaker['uuid'])
+    time_context = ""
+    
+    if last_seen_iso:
+        last_seen = parser.isoparse(last_seen_iso)
+        delta = now - last_seen
+        
+        days = delta.days
+        seconds = delta.seconds
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        
+        time_str = ""
+        if days > 0: time_str = f"{days} days"
+        elif hours > 0: time_str = f"{hours} hours"
+        else: time_str = f"{minutes} minutes"
+        
+        time_context = f"Time since last spoke: {time_str}"
+        
+        if days >= 2:
+            time_context += "\n(User has been gone for a LONG time. React accordingly: 'It's been so long!', 'You still remember me?', etc.)"
+        elif days == 0 and hours < 1:
+            time_context += "\n(User replied very quickly. You can tease them: 'What took you so long lol?', 'Miss me already?', etc.)"
+    else:
+        time_context = "This is your first meeting."
+
     user_message_content = f"""
     --- RECENT CONVERSATION (Most Recent Last) ---
     {history_text}
+    
+    --- TIME CONTEXT ---
+    Current Time: {now.strftime("%Y-%m-%d %H:%M")}
+    {time_context}
 
     Respond to: "{current_content}"
     """
