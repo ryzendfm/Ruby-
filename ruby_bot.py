@@ -18,8 +18,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 MEMORY_LIMIT = 20
-AMBIENT_CHANCE = 0.03
+AMBIENT_CHANCE = 0.20
 AMBIENT_COOLDOWN = 600  # 10 minutes in seconds
+AMBIENT_ACTIVE = True # Default On
 
 # --- VALIDATE CONFIG ---
 REQUIRED_VARS = ["SUPABASE_URL", "SUPABASE_KEY", "GROQ_API_KEY", "DISCORD_TOKEN"]
@@ -483,7 +484,26 @@ Insults: `{rel['insults_count']}` | Compliments: `{rel['compliments_count']}`
         await message.channel.send(stats_msg)
         return
 
-    # 0.1 DEBUG COMMANDS (Admin/Owner Only - Simplified check for now)
+    # 0.1 AMBIENT CONTROL COMMAND
+    if message.content.lower().startswith("!ambient"):
+        if not message.author.guild_permissions.administrator: return
+        
+        global AMBIENT_ACTIVE
+        parts = message.content.split()
+        if len(parts) < 2:
+            await message.channel.send(f"Ambient mode is currently **{'ON' if AMBIENT_ACTIVE else 'OFF'}** (Chance: {int(AMBIENT_CHANCE*100)}%). Usage: `!ambient on` or `!ambient off`")
+            return
+            
+        action = parts[1].lower()
+        if action == "on":
+            AMBIENT_ACTIVE = True
+            await message.channel.send("✅ Ambient Mode **ENABLED**. Random messaging active.")
+        elif action == "off":
+            AMBIENT_ACTIVE = False
+            await message.channel.send("🚫 Ambient Mode **DISABLED**. Ruby will only speak when spoken to.")
+        return
+
+    # 0.2 DEBUG COMMANDS (Admin/Owner Only - Simplified check for now)
     # Usage: !set_affinity @User 50
     if message.content.startswith("!set_affinity"):
         if not message.author.guild_permissions.administrator: 
@@ -578,6 +598,8 @@ Insults: `{rel['insults_count']}` | Compliments: `{rel['compliments_count']}`
         return
 
     # 2. AMBIENT TRIGGER (Probability based)
+    if not AMBIENT_ACTIVE: return
+
     roll = random.random()
     if roll < AMBIENT_CHANCE:
         # Check Cooldown
@@ -585,7 +607,7 @@ Insults: `{rel['insults_count']}` | Compliments: `{rel['compliments_count']}`
         now = time.time()
         if channel_id in last_ambient_response:
             if now - last_ambient_response[channel_id] < AMBIENT_COOLDOWN:
-                print(f"DEBUG: Ambient Cooldown Active for {message.channel.name} ({int(now - last_ambient_response[channel_id])}s / {AMBIENT_COOLDOWN}s)")
+                # print(f"DEBUG: Ambient Cooldown Active for {message.channel.name} ({int(now - last_ambient_response[channel_id])}s / {AMBIENT_COOLDOWN}s)")
                 return # Still on cooldown
         
         # Check if user has history (Safety/Opt-in)
@@ -598,9 +620,5 @@ Insults: `{rel['insults_count']}` | Compliments: `{rel['compliments_count']}`
         last_ambient_response[channel_id] = now
         print(f"DEBUG: Triggering Ambient Presence in {message.channel.name} by {message.author.display_name}")
         await handle_bot_logic(message, is_ambient=True)
-    else:
-         # Log near misses to confirm bot is scanning
-         if roll < 0.15:
-             print(f"DEBUG: Ambient Roll Failed ({roll:.2f} >= {AMBIENT_CHANCE}) in {message.channel.name}")
 
 bot.run(DISCORD_TOKEN)
