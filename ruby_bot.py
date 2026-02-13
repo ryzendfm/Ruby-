@@ -570,18 +570,22 @@ Insults: `{rel['insults_count']}` | Compliments: `{rel['compliments_count']}`
             await message.channel.send(f"Error: {e}")
         return
 
-    # 1. MENTION TRIGGER (100% response)
-    if bot.user.mentioned_in(message):
+    # 1. MENTION TRIGGER (100% response) OR DM (Direct Message)
+    if bot.user.mentioned_in(message) or isinstance(message.channel, discord.DMChannel):
+        if isinstance(message.channel, discord.DMChannel):
+            print(f"DEBUG: DM received from {message.author.name}")
         await handle_bot_logic(message, is_ambient=False)
         return
 
     # 2. AMBIENT TRIGGER (Probability based)
-    if random.random() < AMBIENT_CHANCE:
+    roll = random.random()
+    if roll < AMBIENT_CHANCE:
         # Check Cooldown
         channel_id = str(message.channel.id)
         now = time.time()
         if channel_id in last_ambient_response:
             if now - last_ambient_response[channel_id] < AMBIENT_COOLDOWN:
+                print(f"DEBUG: Ambient Cooldown Active for {message.channel.name} ({int(now - last_ambient_response[channel_id])}s / {AMBIENT_COOLDOWN}s)")
                 return # Still on cooldown
         
         # Check if user has history (Safety/Opt-in)
@@ -594,5 +598,9 @@ Insults: `{rel['insults_count']}` | Compliments: `{rel['compliments_count']}`
         last_ambient_response[channel_id] = now
         print(f"DEBUG: Triggering Ambient Presence in {message.channel.name} by {message.author.display_name}")
         await handle_bot_logic(message, is_ambient=True)
+    else:
+         # Log near misses to confirm bot is scanning
+         if roll < 0.15:
+             print(f"DEBUG: Ambient Roll Failed ({roll:.2f} >= {AMBIENT_CHANCE}) in {message.channel.name}")
 
 bot.run(DISCORD_TOKEN)
