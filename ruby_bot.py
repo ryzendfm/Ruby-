@@ -459,8 +459,12 @@ async def handle_bot_logic(message, is_ambient=False):
     Current Time: {now.strftime("%I:%M %p")} (Approx)
     {time_context}
     
-    INSTRUCTION: Keep time references CASUAL and FUZZY (e.g., "a while ago", "yesterday", "idk like 10 mins??").
-    EXCEPTION: If your Stance is SASSY/HOSTILE, you can be weirdly specific to prove a point (e.g. "Actually it was 2:43 PM.").
+    INSTRUCTION: DO NOT mention time/dates in normal conversation.
+    EXCEPTIONS: 
+    1. If the User asks about time/dates explicitly.
+    2. If the User has been gone for > 2 Days (Say "I missed you" etc).
+    3. If the User replies INSTANTLY (< 1 min) (Tease them for being fast).
+    4. If your Stance is SASSY/HOSTILE (You can use specific times to prove a point).
 
     Respond to: "{current_content}"
     """
