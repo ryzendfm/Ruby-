@@ -407,8 +407,12 @@ async def handle_bot_logic(message, is_ambient=False):
     # 3.2 TIME AWARNESS
     import datetime
     from dateutil import parser
+    import pytz
     
-    now = datetime.datetime.now(datetime.timezone.utc)
+    # Set Timezone to IST (Indian Standard Time)
+    ist = pytz.timezone('Asia/Kolkata')
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    now = now_utc.astimezone(ist)
     
     def get_fuzzy_time(last_seen_iso):
         if not last_seen_iso: return "never"

@@ -3,3 +3,4 @@ supabase
 groq
 python-dotenv
 requests
+pytz
