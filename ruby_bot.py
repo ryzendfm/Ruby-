@@ -22,6 +22,26 @@ AMBIENT_CHANCE = 0.20
 AMBIENT_COOLDOWN = 600  # 10 minutes in seconds
 AMBIENT_ACTIVE = True # Default On
 
+# --- STAGE 1: MOOD/TEMPER CONFIG ---
+MOOD_DECAY_PER_MESSAGE = 3          # Passive decay toward neutral on every message in the guild
+MOOD_DECAY_INTERVAL_SECONDS = 300   # Also decay a bit over time even if it's quiet (5 min ticks)
+MOOD_TIME_DECAY_AMOUNT = 5
+# How much a single message from each role shifts intensity DOWN (calming) or UP (provoking)
+# Positive = calms her down. Negative = makes it worse.
+CALM_EFFECT_BY_ROLE = {
+    "baby": 20,
+    "favorite": 12,
+    "friend": 6,
+    "neutral": 2,
+    "annoying": -6,
+    "enemy": -12,
+}
+MOOD_THRESHOLDS = {
+    "angry": 70,
+    "annoyed": 35,
+    "sulking": 15,
+}
+
 # --- VALIDATE CONFIG ---
 REQUIRED_VARS = ["SUPABASE_URL", "SUPABASE_KEY", "GROQ_API_KEY", "DISCORD_TOKEN"]
 missing = [v for v in REQUIRED_VARS if not os.getenv(v)]
@@ -96,6 +116,85 @@ class RubyMemory:
         if res.data:
             return res.data[0]['created_at']
         return None
+
+    # --- STAGE 1: GUILD MOOD / TEMPER ---
+    def get_guild_mood(self, guild_id):
+        """Fetches (or initializes) Ruby's current mood state for a server."""
+        res = supabase.table('bot_mood').select('*').eq('guild_id', str(guild_id)).execute()
+        if not res.data:
+            new_row = supabase.table('bot_mood').insert({
+                "guild_id": str(guild_id),
+                "current_mood": "neutral",
+                "intensity": 0
+            }).execute()
+            return new_row.data[0]
+        return res.data[0]
+
+    def _mood_label_from_intensity(self, intensity):
+        if intensity >= MOOD_THRESHOLDS["angry"]:
+            return "angry"
+        if intensity >= MOOD_THRESHOLDS["annoyed"]:
+            return "annoyed"
+        if intensity >= MOOD_THRESHOLDS["sulking"]:
+            return "sulking"
+        return "neutral"
+
+    def apply_mood_decay(self, guild_id):
+        """Applies passive time-based decay if enough time has passed since last update."""
+        mood = self.get_guild_mood(guild_id)
+        if mood['intensity'] <= 0:
+            return mood
+
+        try:
+            from dateutil import parser as _parser
+            import datetime as _dt
+            last_updated = _parser.isoparse(mood['last_updated'])
+            now = _dt.datetime.now(_dt.timezone.utc)
+            elapsed = (now - last_updated).total_seconds()
+            ticks = int(elapsed // MOOD_DECAY_INTERVAL_SECONDS)
+            if ticks > 0:
+                new_intensity = max(0, mood['intensity'] - (ticks * MOOD_TIME_DECAY_AMOUNT))
+                return self.set_guild_mood(guild_id, new_intensity, mood.get('triggered_by_uuid'))
+        except Exception as e:
+            print(f"Mood decay error: {e}")
+        return mood
+
+    def set_guild_mood(self, guild_id, new_intensity, triggered_by_uuid=None):
+        """Clamps + writes new intensity, auto-derives mood label."""
+        new_intensity = max(0, min(100, new_intensity))
+        new_label = self._mood_label_from_intensity(new_intensity)
+        update_payload = {
+            "intensity": new_intensity,
+            "current_mood": new_label,
+        }
+        if triggered_by_uuid is not None:
+            update_payload["triggered_by_uuid"] = triggered_by_uuid
+
+        res = supabase.table('bot_mood').update(update_payload).eq('guild_id', str(guild_id)).execute()
+        if res.data:
+            return res.data[0]
+        # Fallback: re-fetch if the update call didn't return the row for some reason
+        return self.get_guild_mood(guild_id)
+
+    def apply_calm_or_provoke(self, guild_id, speaker_uuid, speaker_role, is_negative_trigger=False):
+        """
+        Called on every message. If Ruby is already heated, favorite/baby roles calm
+        her down faster than neutral ones, and annoying/enemy roles make it worse
+        (or reignite her even from neutral, if is_negative_trigger is True — e.g. an
+        insult or rude message was detected).
+        """
+        mood = self.apply_mood_decay(guild_id)
+        effect = CALM_EFFECT_BY_ROLE.get(speaker_role, 2)  # positive=calms, negative=provokes
+
+        if mood['intensity'] <= 0 and effect >= 0:
+            return mood  # Already neutral and nothing provoking her — leave it alone
+
+        if mood['intensity'] <= 0 and effect < 0 and not is_negative_trigger:
+            return mood  # Disliked person just chatting normally isn't automatically a fight
+
+        # effect subtracted: positive (calm) lowers intensity, negative (provoke) raises it
+        new_intensity = mood['intensity'] - effect
+        return self.set_guild_mood(guild_id, new_intensity, speaker_uuid if effect < 0 else None)
 
     def get_leaderboard(self):
         stats = {}
@@ -249,14 +348,31 @@ async def analyze_emotions(history_text, speaker_data):
 async def handle_bot_logic(message, is_ambient=False):
     # 1. LOAD DATA
     speaker = memory.get_user_data(message.author.id, message.author.name, message.author.display_name)
-    
+
+    # 1.1 STRANGER CHECK (Stage 1) — must happen BEFORE we log this message,
+    # otherwise has_history() would already count the message we're currently handling.
+    is_stranger = not memory.has_history(speaker['uuid'])
+
     target = None
     if message.mentions:
         for m in message.mentions:
             if m.id != bot.user.id:
                 target = memory.get_user_data(m.id, m.name, m.display_name)
                 break
-    
+
+    # 1.2 GUILD MOOD UPDATE (Stage 1)
+    # DMs have no guild, so mood/temper only applies in servers.
+    guild_mood = None
+    if message.guild is not None:
+        rude_pattern = r"\b(shut up|stupid|dumb|hate you|annoying|ugly|trash|suck|shit|fuck you|useless)\b"
+        looks_rude = bool(re.search(rude_pattern, message.content.lower()))
+        guild_mood = memory.apply_calm_or_provoke(
+            message.guild.id,
+            speaker['uuid'],
+            speaker['rel']['role'],
+            is_negative_trigger=looks_rude and speaker['rel']['role'] in ['enemy', 'annoying']
+        )
+
     # 1.5 LOAD HISTORY
     history_messages = []
     async for msg in message.channel.history(limit=MEMORY_LIMIT):
@@ -284,10 +400,10 @@ async def handle_bot_logic(message, is_ambient=False):
     # 2. RUN LOGIC
     action, mode = decide_stance(speaker, target)
     print(f"DEBUG: [{speaker['nickname']}] Action: {action}, Mode: {mode}")
-    
+
     # 3. BUILD PROMPT
     # We construct the prompt to prioritize STANCE over BASE PERSONALITY.
-    
+
     stance_instruction = ""
     if mode in ["Hostile", "Cold", "Sassy", "Possessive"]:
         stance_instruction = f"""
@@ -305,6 +421,40 @@ async def handle_bot_logic(message, is_ambient=False):
         CURRENT MODE: {mode}
         ACTION: {action}
         Maintain your normal playful, cheerful self, but adapt to this mode.
+        """
+
+    # 3.05 STRANGER OVERRIDE (Stage 1) — takes priority over normal stance,
+    # since a total stranger shouldn't get playful/sassy/possessive energy at all.
+    if is_stranger:
+        stance_instruction = f"""
+        🚨 **STRANGER OVERRIDE** 🚨
+        You have NEVER spoken to {speaker['display_name']} before. They are a total stranger to you.
+        - Be noticeably more FORMAL, a little SHY, and a bit reserved — like meeting someone new in person for the first time.
+        - Do NOT use nicknames, inside jokes, or teasing. You don't know them well enough for that yet.
+        - Do NOT be cold or rude either — just polite, a little guarded, mildly curious about who they are.
+        - You can warm up slightly if they're being warm and friendly, but don't jump straight to "bestie" energy.
+        """
+
+    # 3.06 GUILD MOOD OVERRIDE (Stage 1)
+    # This is separate from her 1:1 stance toward the speaker — it's Ruby's ambient
+    # temper for the WHOLE server, that can bleed into how she talks to everyone.
+    mood_instruction = ""
+    if guild_mood and guild_mood['intensity'] > 0 and not is_stranger:
+        mood_label = guild_mood['current_mood']
+        intensity = guild_mood['intensity']
+        mood_flavor = {
+            "sulking": "You're a little sulky/pouty right now — short replies, mild attitude, not fully back to normal yet.",
+            "annoyed": "You're visibly annoyed/irritated right now. Replies are shorter, a bit snappy, less patient than usual.",
+            "angry": "You are genuinely ANGRY right now. Be sharp, short-tempered, and don't hide it. You're not in the mood for jokes.",
+        }.get(mood_label, "")
+        if mood_flavor:
+            mood_instruction = f"""
+        --- AMBIENT MOOD (Applies to how you treat EVERYONE right now, layered on top of your 1:1 stance) ---
+        Current server-wide mood: {mood_label.upper()} (intensity {intensity}/100)
+        {mood_flavor}
+        - If {speaker['nickname']} is someone you like ({speaker['rel']['role']} = baby/favorite/friend), they CAN calm you down — let your tone visibly soften a little bit if they're being sweet/caring toward you.
+        - If {speaker['nickname']} is someone you dislike, they will make it WORSE — don't hide your irritation with them.
+        - Don't explain WHY you're in a mood unless directly asked — just act it out naturally, like a real person having an off moment.
         """
     
     # 3.1 GATHER GLOBAL CONTEXT (Leaderboard) for "Who is your favorite?" questions
@@ -336,12 +486,14 @@ async def handle_bot_logic(message, is_ambient=False):
     system_instruction = f"""
     --- EMOTIONAL STANCE (HIGHEST PRIORITY) ---
     {stance_instruction}
-    
+    {mood_instruction}
+
     RELATIONSHIP KEY:
     - "Baby": ROMANTIC PARTNER (Boyfriend/Girlfriend). You are deeply in love, affectionate, and possessive. 
     - "Favorite": BFF / BUDDY. You are super close but platonic.
-    - "Neutral": STRANGER. You are polite but distant.
+    - "Neutral": Someone you know casually. You are polite but not especially close.
     - "Enemy": Someone you dislike strongly.
+    (Note: a person you've NEVER spoken to before is a stranger — see STRANGER OVERRIDE above if present, which takes priority over all of this.)
     
     Your relationship with SPEAKER ({speaker['nickname']}): {speaker['rel']['role']} (Affinity: {speaker['rel']['affinity_score']})
     Speaker's Vibe: {speaker['pers']['vibe_summary']}
@@ -556,7 +708,7 @@ Insults: `{rel['insults_count']}` | Compliments: `{rel['compliments_count']}`
 
     # 0.1 AMBIENT CONTROL COMMAND
     if message.content.lower().startswith("!ambient"):
-        if not message.author.guild_permissions.administrator: return
+        if not message.guild or not message.author.guild_permissions.administrator: return
         
         global AMBIENT_ACTIVE
         parts = message.content.split()
@@ -573,10 +725,23 @@ Insults: `{rel['insults_count']}` | Compliments: `{rel['compliments_count']}`
             await message.channel.send("🚫 Ambient Mode **DISABLED**. Ruby will only speak when spoken to.")
         return
 
+    # 0.15 MOOD DEBUG COMMAND (Stage 1) — Usage: !mood  or  !mood reset
+    if message.content.lower().startswith("!mood"):
+        if not message.guild or not message.author.guild_permissions.administrator:
+            return
+        parts = message.content.split()
+        if len(parts) >= 2 and parts[1].lower() == "reset":
+            memory.set_guild_mood(message.guild.id, 0)
+            await message.channel.send("😌 Ruby's mood has been reset to neutral.")
+            return
+        mood = memory.apply_mood_decay(message.guild.id)
+        await message.channel.send(f"**Current mood:** `{mood['current_mood']}` (intensity: `{mood['intensity']}/100`)")
+        return
+
     # 0.2 DEBUG COMMANDS (Admin/Owner Only - Simplified check for now)
     # Usage: !set_affinity @User 50
     if message.content.startswith("!set_affinity"):
-        if not message.author.guild_permissions.administrator: 
+        if not message.guild or not message.author.guild_permissions.administrator:
              return
         try:
             parts = message.content.split()
@@ -605,7 +770,7 @@ Insults: `{rel['insults_count']}` | Compliments: `{rel['compliments_count']}`
 
     # Usage: !set_trust @User 50
     if message.content.startswith("!set_trust"):
-        if not message.author.guild_permissions.administrator:
+        if not message.guild or not message.author.guild_permissions.administrator:
              return
         try:
             parts = message.content.split()
@@ -631,7 +796,7 @@ Insults: `{rel['insults_count']}` | Compliments: `{rel['compliments_count']}`
 
     # Usage: !set_role @User enemy
     if message.content.startswith("!set_role"):
-        if not message.author.guild_permissions.administrator:
+        if not message.guild or not message.author.guild_permissions.administrator:
              return
         try:
             parts = message.content.split()
