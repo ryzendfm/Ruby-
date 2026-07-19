@@ -4,3 +4,5 @@ groq
 python-dotenv
 requests
 pytz
+python-dateutil
+
