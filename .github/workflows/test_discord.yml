@@ -1,22 +1,6 @@
 name: Test Discord Connectivity
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'test/**'
-      - 'ruby_bot.py'
-      - 'requirements.txt'
-      - 'workflow/test_discord.yml'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'test/**'
-      - 'ruby_bot.py'
-      - 'requirements.txt'
-      - 'workflow/test_discord.yml'
   workflow_dispatch:
 
 jobs:
