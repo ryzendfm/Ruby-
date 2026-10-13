@@ -1,0 +1,46 @@
+name: Test Discord Connectivity
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'test/**'
+      - 'ruby_bot.py'
+      - 'requirements.txt'
+      - 'workflow/test_discord.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'test/**'
+      - 'ruby_bot.py'
+      - 'requirements.txt'
+      - 'workflow/test_discord.yml'
+  workflow_dispatch:
+
+jobs:
+  test-discord:
+    name: Verify Discord Gateway & REST API
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Discord Connectivity Test
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        run: |
+          python test/test_discord.py
