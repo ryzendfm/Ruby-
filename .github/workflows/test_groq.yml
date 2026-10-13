@@ -1,22 +1,6 @@
 name: Test Groq Connectivity
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'test/**'
-      - 'ruby_bot.py'
-      - 'requirements.txt'
-      - 'workflow/test_groq.yml'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'test/**'
-      - 'ruby_bot.py'
-      - 'requirements.txt'
-      - 'workflow/test_groq.yml'
   workflow_dispatch:
     inputs:
       custom_model:
