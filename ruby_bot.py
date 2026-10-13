@@ -22,6 +22,10 @@ AMBIENT_CHANCE = 0.20
 AMBIENT_COOLDOWN = 600  # 10 minutes in seconds
 AMBIENT_ACTIVE = True # Default On
 
+# --- MODEL CONFIG ---
+MODEL_8B = "openai/gpt-oss-20b"   # Replaces llama-8b (emotion/vibe analysis)
+MODEL_70B = "qwen/qwen3.8-27b"    # Replaces llama-70b (primary chat reasoning)
+
 # --- STAGE 1: MOOD/TEMPER CONFIG ---
 MOOD_DECAY_PER_MESSAGE = 3          # Passive decay toward neutral on every message in the guild
 MOOD_DECAY_INTERVAL_SECONDS = 300   # Also decay a bit over time even if it's quiet (5 min ticks)
@@ -306,7 +310,7 @@ async def analyze_emotions(history_text, speaker_data):
         
         chat_completion = groq_client.chat.completions.create(
             messages=[{"role": "system", "content": prompt}],
-            model="llama-3.1-8b-instant",
+            model=MODEL_8B,
             response_format={"type": "json_object"}
         )
         
@@ -636,7 +640,7 @@ async def handle_bot_logic(message, is_ambient=False):
                     image_url = attachment.url
                     break
         
-        model_to_use = "meta-llama/llama-4-scout-17b-16e-instruct" if image_url else "llama-3.1-8b-instant"
+        model_to_use = "meta-llama/llama-4-scout-17b-16e-instruct" if image_url else MODEL_70B
         
         messages = [{"role": "system", "content": system_instruction}]
 
